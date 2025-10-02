@@ -69,3 +69,8 @@ File overview
   * `monte_carlo.py` – Monte Carlo orchestration helpers.
   * `gui.py` – Tkinter-based graphical interface with visual reporting.
   * `app.py` – original command-line interface (kept for reference).
+
+Release history
+---------------
+
+* Re-published the graphical simulator enhancements after the previous push was inadvertently removed, ensuring the full GUI experience and analytics remain available.

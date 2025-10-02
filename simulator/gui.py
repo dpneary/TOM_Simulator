@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import queue
 import threading
 import tkinter as tk
@@ -394,6 +395,7 @@ class SimulatorGUI:
         detail_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
         detail_frame.columnconfigure(0, weight=1)
         detail_frame.rowconfigure(2, weight=1)
+        detail_frame.rowconfigure(3, weight=1)
 
         selector_frame = ttk.Frame(detail_frame)
         selector_frame.grid(row=0, column=0, sticky="ew")
@@ -408,6 +410,18 @@ class SimulatorGUI:
             row=1, column=0, sticky="w", pady=(6, 6)
         )
 
+        chart_container = ttk.Frame(detail_frame)
+        chart_container.grid(row=2, column=0, sticky="nsew")
+        chart_container.columnconfigure(0, weight=1)
+        chart_container.rowconfigure(0, weight=1)
+
+        self.detail_figure = Figure(figsize=(6.5, 4.6), dpi=100)
+        self.throughput_hist_ax = self.detail_figure.add_subplot(221)
+        self.cycle_hist_ax = self.detail_figure.add_subplot(222)
+        self.station_state_ax = self.detail_figure.add_subplot(212)
+        self.detail_canvas = FigureCanvasTkAgg(self.detail_figure, master=chart_container)
+        self.detail_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
         columns = ("station", "util", "blocked", "starved")
         self.station_tree = ttk.Treeview(detail_frame, columns=columns, show="headings")
         self.station_tree.heading("station", text="Workstation")
@@ -418,10 +432,10 @@ class SimulatorGUI:
         self.station_tree.column("util", width=120, anchor="center")
         self.station_tree.column("blocked", width=120, anchor="center")
         self.station_tree.column("starved", width=120, anchor="center")
-        self.station_tree.grid(row=2, column=0, sticky="nsew")
+        self.station_tree.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
 
         buffer_frame = ttk.Frame(detail_frame)
-        buffer_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        buffer_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(buffer_frame, text="Buffer capacity to evaluate:").grid(row=0, column=0, sticky="w")
         self.buffer_capacity_var = tk.StringVar(value="1")
         ttk.Entry(buffer_frame, textvariable=self.buffer_capacity_var, width=8).grid(row=0, column=1, sticky="w", padx=(4, 12))
@@ -753,6 +767,7 @@ class SimulatorGUI:
             self.detail_summary_var.set("")
             for row in self.station_tree.get_children():
                 self.station_tree.delete(row)
+            self._update_detail_charts(None, None)
 
     def _update_throughput_chart(self, names: List[str], values: List[float], errors: List[float]) -> None:
         self.throughput_ax.clear()
@@ -783,6 +798,7 @@ class SimulatorGUI:
         line_name = self.detail_line_var.get()
         summary = next((s for s in self.monte_carlo_summaries if s.line_name == line_name), None)
         if not summary:
+            self._update_detail_charts(None, None)
             return
         self.detail_summary_var.set(
             f"Throughput {summary.throughput_mean:.3f} jobs/min (σ {summary.throughput_std:.3f}) | "
@@ -803,6 +819,117 @@ class SimulatorGUI:
                     f"{starved * 100:.1f}",
                 ),
             )
+
+        result = next((r for r in self.monte_carlo_results if r.line_name == line_name), None)
+        self._update_detail_charts(summary, result)
+
+    def _update_detail_charts(
+        self,
+        summary: Optional[MonteCarloSummary],
+        result: Optional[MonteCarloResult],
+    ) -> None:
+        self.throughput_hist_ax.clear()
+        self.cycle_hist_ax.clear()
+        self.station_state_ax.clear()
+
+        if not summary or not result:
+            for axis in (self.throughput_hist_ax, self.cycle_hist_ax, self.station_state_ax):
+                axis.text(0.5, 0.5, "Run a simulation to view charts", ha="center", va="center")
+                axis.set_xticks([])
+                axis.set_yticks([])
+            self.detail_canvas.draw_idle()
+            return
+
+        throughput_values = [run.throughput_rate for run in result.runs if run.throughput_rate > 0]
+        cycle_values = [run.average_cycle_time for run in result.runs if run.average_cycle_time > 0]
+
+        if throughput_values:
+            bins = self._choose_histogram_bins(len(throughput_values))
+            self.throughput_hist_ax.hist(
+                throughput_values,
+                bins=bins,
+                color="#4C78A8",
+                edgecolor="white",
+            )
+            self.throughput_hist_ax.axvline(summary.throughput_mean, color="#F58518", linestyle="--", label="Mean")
+            self.throughput_hist_ax.set_title("Throughput distribution")
+            self.throughput_hist_ax.set_xlabel("Jobs per minute")
+            self.throughput_hist_ax.set_ylabel("Simulation runs")
+            self.throughput_hist_ax.legend()
+        else:
+            self.throughput_hist_ax.text(0.5, 0.5, "No throughput recorded", ha="center", va="center")
+
+        if cycle_values:
+            bins = self._choose_histogram_bins(len(cycle_values))
+            self.cycle_hist_ax.hist(
+                cycle_values,
+                bins=bins,
+                color="#72B7B2",
+                edgecolor="white",
+            )
+            self.cycle_hist_ax.axvline(summary.cycle_time_mean, color="#F58518", linestyle="--", label="Mean")
+            self.cycle_hist_ax.set_title("Cycle time distribution")
+            self.cycle_hist_ax.set_xlabel("Minutes per job")
+            self.cycle_hist_ax.set_ylabel("Simulation runs")
+            self.cycle_hist_ax.legend()
+        else:
+            self.cycle_hist_ax.text(0.5, 0.5, "No completed jobs", ha="center", va="center")
+
+        stations = list(summary.station_utilization.keys())
+        if stations:
+            y_positions = list(range(len(stations)))
+            starved = [summary.station_starved.get(station, 0.0) * 100 for station in stations]
+            processing = [summary.station_utilization.get(station, 0.0) * 100 for station in stations]
+            blocked = [summary.station_blocked.get(station, 0.0) * 100 for station in stations]
+
+            self.station_state_ax.barh(
+                y_positions,
+                starved,
+                color="#E45756",
+                label="Starved",
+            )
+            self.station_state_ax.barh(
+                y_positions,
+                processing,
+                left=starved,
+                color="#4C78A8",
+                label="Processing",
+            )
+            stacked = [s + p for s, p in zip(starved, processing)]
+            self.station_state_ax.barh(
+                y_positions,
+                blocked,
+                left=stacked,
+                color="#F58518",
+                label="Blocked",
+            )
+            self.station_state_ax.set_yticks(y_positions)
+            self.station_state_ax.set_yticklabels(stations)
+            self.station_state_ax.set_xlabel("Percentage of simulated time")
+            self.station_state_ax.set_xlim(0, 100)
+            self.station_state_ax.set_title("Workstation state mix")
+            self.station_state_ax.legend(loc="lower right")
+            for y, s, p, b in zip(y_positions, starved, processing, blocked):
+                total = s + p + b
+                self.station_state_ax.text(
+                    min(total + 1, 100),
+                    y,
+                    f"{total:.1f}%",
+                    va="center",
+                    fontsize=8,
+                    color="#444444",
+                )
+        else:
+            self.station_state_ax.text(0.5, 0.5, "No workstation data", ha="center", va="center")
+
+        self.detail_figure.tight_layout(pad=1.5)
+        self.detail_canvas.draw_idle()
+
+    @staticmethod
+    def _choose_histogram_bins(count: int) -> int:
+        if count <= 1:
+            return 1
+        return max(5, min(20, int(math.sqrt(count))))
 
     # ------------------------------------------------------------------
     # Buffer suggestion helper
@@ -859,6 +986,7 @@ class SimulatorGUI:
             )
             best_delta = float("-inf")
             best_index = None
+            best_summary: Optional[MonteCarloSummary] = None
             messages = []
             for idx in range(len(line.tasks) - 1):
                 modified = base_line.with_buffer_override(idx, capacity)
@@ -866,22 +994,53 @@ class SimulatorGUI:
                     run_monte_carlo(modified, jobs_to_complete=jobs, warmup_jobs=warmup, simulations=sims, base_seed=seed)
                 )
                 delta = summary.throughput_mean - base_summary.throughput_mean
+                cycle_delta = summary.cycle_time_mean - base_summary.cycle_time_mean
                 before = line.tasks[idx].name
                 after = line.tasks[idx + 1].name
                 messages.append(
-                    f"Between {before} and {after}: throughput {summary.throughput_mean:.3f} (Δ {delta:+.3f})"
+                    "Between {before} and {after}: throughput {throughput:.3f} "
+                    "(Δ {delta:+.3f}), cycle {cycle:.3f} min (Δ {cycle_delta:+.3f})".format(
+                        before=before,
+                        after=after,
+                        throughput=summary.throughput_mean,
+                        delta=delta,
+                        cycle=summary.cycle_time_mean,
+                        cycle_delta=cycle_delta,
+                    )
                 )
                 if delta > best_delta:
                     best_delta = delta
                     best_index = idx
-            if best_index is None or best_delta <= 1e-6:
-                result_text = "No buffer location provided a meaningful improvement."
+                    best_summary = summary
+            if best_index is None or best_summary is None:
+                result_text = "Buffer study could not identify a recommendation."
             else:
                 before = line.tasks[best_index].name
                 after = line.tasks[best_index + 1].name
-                result_text = (
-                    f"Suggested location: between {before} and {after} (Δ throughput {best_delta:+.3f} jobs/min)."
-                )
+                baseline = base_summary.throughput_mean
+                pct_change = (best_summary.throughput_mean - baseline) / baseline * 100 if baseline > 0 else 0.0
+                cycle_delta = best_summary.cycle_time_mean - base_summary.cycle_time_mean
+                if best_delta > 0:
+                    result_text = (
+                        "Suggested location: between {before} and {after}. New throughput {new:.3f} jobs/min "
+                        "({pct:+.2f}% vs baseline), cycle time Δ {cycle_delta:+.3f} min."
+                    ).format(
+                        before=before,
+                        after=after,
+                        new=best_summary.throughput_mean,
+                        pct=pct_change,
+                        cycle_delta=cycle_delta,
+                    )
+                else:
+                    result_text = (
+                        "No positive throughput gains detected. Least disruptive placement is between {before} and {after} "
+                        "(Δ throughput {delta:+.3f} jobs/min, Δ cycle time {cycle_delta:+.3f} min)."
+                    ).format(
+                        before=before,
+                        after=after,
+                        delta=best_delta,
+                        cycle_delta=cycle_delta,
+                    )
             final = "\n".join(messages + ["", result_text])
             self._buffer_queue.put(final)
         except Exception as exc:  # pragma: no cover - runtime guard
