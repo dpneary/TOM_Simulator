@@ -45,6 +45,8 @@ Capabilities
 * Run an automated buffer impact study that evaluates each potential buffer
   location, summarises the impact on throughput and cycle time, and recommends
   the placement that yields the largest throughput gain.
+* Run an automated buffer impact study that evaluates each potential buffer
+  location and recommends the placement that yields the largest throughput gain.
 
 Answering the prompt's question
 -------------------------------
