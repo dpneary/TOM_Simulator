@@ -39,6 +39,12 @@ Capabilities
   replications, and random seed) directly from the setup screen.
 * Review throughput and cycle-time summaries in an interactive results tab with
   comparison charts and per-station utilisation, blocked, and starved metrics.
+* Diagnose variation with per-line throughput and cycle-time distribution
+  histograms plus stacked workstation state charts that surface bottlenecks at a
+  glance.
+* Run an automated buffer impact study that evaluates each potential buffer
+  location, summarises the impact on throughput and cycle time, and recommends
+  the placement that yields the largest throughput gain.
 * Run an automated buffer impact study that evaluates each potential buffer
   location and recommends the placement that yields the largest throughput gain.
 
