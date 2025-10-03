@@ -40,13 +40,15 @@ Capabilities
 * Review throughput and cycle-time summaries in an interactive results tab with
   comparison charts and per-station utilisation, blocked, and starved metrics.
 * Diagnose variation with per-line throughput and cycle-time distribution
-  histograms plus stacked workstation state charts that surface bottlenecks at a
-  glance.
+  histograms, box plots, scatter plots, and run-by-run trend lines that surface
+  variability and correlations at a glance.
+* Inspect workstation congestion with stacked state charts alongside dedicated
+  blocked/starved bar charts to pinpoint where work is waiting.
 * Run an automated buffer impact study that evaluates each potential buffer
   location, summarises the impact on throughput and cycle time, and recommends
   the placement that yields the largest throughput gain.
-* Run an automated buffer impact study that evaluates each potential buffer
-  location and recommends the placement that yields the largest throughput gain.
+* Learn Monte Carlo basics and the workflow for configuring studies from the
+  Overview tab that opens with guided instructions.
 
 Answering the prompt's question
 -------------------------------
@@ -73,4 +75,4 @@ File overview
 Release history
 ---------------
 
-* Re-published the graphical simulator enhancements after the previous push was inadvertently removed, ensuring the full GUI experience and analytics remain available.
+* Expanded the graphical simulator with an instructional overview tab, scrollable results, richer Monte Carlo charts, and clearer buffer analysis controls.

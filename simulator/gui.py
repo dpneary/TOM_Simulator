@@ -15,6 +15,49 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 from tkinter import ttk
 
+
+class ScrollableFrame(ttk.Frame):
+    """A vertically scrollable frame for stacking charts and widgets."""
+
+    def __init__(self, parent: tk.Widget, **kwargs) -> None:
+        super().__init__(parent, **kwargs)
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        self.scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.content = ttk.Frame(self.canvas)
+        self.content.bind(
+            "<Configure>", lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        self.canvas.create_window((0, 0), window=self.content, anchor="nw")
+
+        # Support mousewheel scrolling when the cursor is over the frame
+        self.content.bind("<Enter>", self._bind_mousewheel)
+        self.content.bind("<Leave>", self._unbind_mousewheel)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        if event.delta:
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        elif event.num in (4, 5):  # Linux scroll events
+            direction = -1 if event.num == 4 else 1
+            self.canvas.yview_scroll(direction, "units")
+
+    def _bind_mousewheel(self, _event: tk.Event) -> None:
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, _event: tk.Event) -> None:
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+
 from .distributions import DistributionConfig, DistributionFactory
 from .entities import ProcessLine, Task, infinite_buffer
 from .monte_carlo import MonteCarloResult, MonteCarloSummary, run_monte_carlo, summarize_results
@@ -248,17 +291,63 @@ class SimulatorGUI:
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True)
 
+        self.overview_frame = ttk.Frame(notebook, padding=15)
         self.setup_frame = ttk.Frame(notebook, padding=15)
         self.results_frame = ttk.Frame(notebook, padding=15)
+        notebook.add(self.overview_frame, text="Overview")
         notebook.add(self.setup_frame, text="Setup")
         notebook.add(self.results_frame, text="Results")
 
+        self._build_overview_tab(self.overview_frame)
         self._build_setup_tab(self.setup_frame)
         self._build_results_tab(self.results_frame)
 
         status_bar = ttk.Frame(self.root)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Label(status_bar, textvariable=self.status_var, anchor="w", padding=(10, 5)).pack(fill=tk.X)
+
+    def _build_overview_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+
+        intro_text = tk.Text(parent, wrap="word", font=("Segoe UI", 10))
+        intro_text.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=intro_text.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        intro_text.configure(yscrollcommand=scrollbar.set)
+
+        content = (
+            "Welcome to the Process Flow Monte Carlo Studio!\n\n"
+            "Monte Carlo simulation repeats a stochastic model many times to understand the range of"
+            " possible outcomes. Each run samples workstation processing times from the chosen"
+            " distributions, tracks how buffers influence starved or blocked equipment, and records"
+            " throughput and cycle-time performance. Reviewing the aggregate statistics highlights"
+            " bottlenecks and the upside of process changes.\n\n"
+            "How to get started:\n"
+            "  1. Use the Setup tab to load an example line or build your own by editing the task table.\n"
+            "  2. Choose a distribution for each workstation and provide parameters such as the mean"
+            "     and range. Buffers can be set to 0 (no storage), a capacity, or infinite.\n"
+            "  3. Configure the Monte Carlo study: jobs to complete, warm-up jobs discarded before"
+            "     statistics are recorded, number of simulation runs, and an optional random seed for"
+            "     reproducibility.\n"
+            "  4. Click Run simulation to generate results for every defined line.\n"
+            "  5. Visit the Results tab to compare throughput, inspect per-station utilization, and"
+            "     explore richer charts of the run-to-run variability.\n\n"
+            "Buffer analysis:\n"
+            "  • Select a line in the Results tab and provide a capacity to automatically test each"
+            "    potential buffer location. The tool reports throughput and cycle-time deltas to help"
+            "    prioritize improvements.\n"
+            "  • You can also select a line directly in the Setup tab and press the buffer button from"
+            "    there—the selection stays synchronized across tabs.\n\n"
+            "Tips:\n"
+            "  • Large Monte Carlo studies provide smoother distributions but require more compute time.\n"
+            "  • Warm-up jobs help remove the bias of the initial empty system; increase the value if"
+            "    you observe transient spikes in cycle time.\n"
+            "  • Compare lines side-by-side to quantify how design choices influence throughput and"
+            "    workstation congestion."
+        )
+        intro_text.insert("1.0", content)
+        intro_text.configure(state="disabled")
 
     def _build_setup_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(1, weight=1)
@@ -352,8 +441,13 @@ class SimulatorGUI:
         )
         intro.grid(row=0, column=0, sticky="w")
 
-        summary_frame = ttk.Frame(parent)
-        summary_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        scrollable = ScrollableFrame(parent)
+        scrollable.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        scrollable.content.columnconfigure(0, weight=1)
+        scrollable.content.rowconfigure(1, weight=1)
+
+        summary_frame = ttk.Frame(scrollable.content)
+        summary_frame.grid(row=0, column=0, sticky="nsew")
         summary_frame.columnconfigure(0, weight=1)
         summary_frame.columnconfigure(1, weight=1)
         summary_frame.rowconfigure(1, weight=1)
@@ -391,11 +485,12 @@ class SimulatorGUI:
         self.throughput_canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
         self.throughput_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        detail_frame = ttk.LabelFrame(summary_frame, text="Line details", padding=10)
-        detail_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        detail_frame = ttk.LabelFrame(scrollable.content, text="Line details", padding=10)
+        detail_frame.grid(row=1, column=0, sticky="nsew", pady=(18, 0))
         detail_frame.columnconfigure(0, weight=1)
         detail_frame.rowconfigure(2, weight=1)
         detail_frame.rowconfigure(3, weight=1)
+        detail_frame.rowconfigure(4, weight=1)
 
         selector_frame = ttk.Frame(detail_frame)
         selector_frame.grid(row=0, column=0, sticky="ew")
@@ -415,12 +510,27 @@ class SimulatorGUI:
         chart_container.columnconfigure(0, weight=1)
         chart_container.rowconfigure(0, weight=1)
 
-        self.detail_figure = Figure(figsize=(6.5, 4.6), dpi=100)
-        self.throughput_hist_ax = self.detail_figure.add_subplot(221)
-        self.cycle_hist_ax = self.detail_figure.add_subplot(222)
-        self.station_state_ax = self.detail_figure.add_subplot(212)
+        self.detail_figure = Figure(figsize=(7.2, 7.8), dpi=100)
+        self.throughput_hist_ax = self.detail_figure.add_subplot(321)
+        self.cycle_hist_ax = self.detail_figure.add_subplot(322)
+        self.throughput_box_ax = self.detail_figure.add_subplot(323)
+        self.cycle_box_ax = self.detail_figure.add_subplot(324)
+        self.scatter_ax = self.detail_figure.add_subplot(325)
+        self.run_sequence_ax = self.detail_figure.add_subplot(326)
+        self.run_sequence_ax_twin = None
         self.detail_canvas = FigureCanvasTkAgg(self.detail_figure, master=chart_container)
         self.detail_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+
+        station_chart_container = ttk.Frame(detail_frame)
+        station_chart_container.grid(row=3, column=0, sticky="nsew", pady=(14, 0))
+        station_chart_container.columnconfigure(0, weight=1)
+        station_chart_container.rowconfigure(0, weight=1)
+
+        self.station_figure = Figure(figsize=(7.2, 4.2), dpi=100)
+        self.station_state_ax = self.station_figure.add_subplot(121)
+        self.station_block_ax = self.station_figure.add_subplot(122)
+        self.station_canvas = FigureCanvasTkAgg(self.station_figure, master=station_chart_container)
+        self.station_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
         columns = ("station", "util", "blocked", "starved")
         self.station_tree = ttk.Treeview(detail_frame, columns=columns, show="headings")
@@ -432,10 +542,10 @@ class SimulatorGUI:
         self.station_tree.column("util", width=120, anchor="center")
         self.station_tree.column("blocked", width=120, anchor="center")
         self.station_tree.column("starved", width=120, anchor="center")
-        self.station_tree.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
+        self.station_tree.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
 
         buffer_frame = ttk.Frame(detail_frame)
-        buffer_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        buffer_frame.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         ttk.Label(buffer_frame, text="Buffer capacity to evaluate:").grid(row=0, column=0, sticky="w")
         self.buffer_capacity_var = tk.StringVar(value="1")
         ttk.Entry(buffer_frame, textvariable=self.buffer_capacity_var, width=8).grid(row=0, column=1, sticky="w", padx=(4, 12))
@@ -796,6 +906,7 @@ class SimulatorGUI:
 
     def _refresh_station_details(self) -> None:
         line_name = self.detail_line_var.get()
+        self._sync_selection_with_results(line_name)
         summary = next((s for s in self.monte_carlo_summaries if s.line_name == line_name), None)
         if not summary:
             self._update_detail_charts(None, None)
@@ -823,21 +934,54 @@ class SimulatorGUI:
         result = next((r for r in self.monte_carlo_results if r.line_name == line_name), None)
         self._update_detail_charts(summary, result)
 
+    def _sync_selection_with_results(self, line_name: str) -> None:
+        if not line_name:
+            return
+        for idx, line in enumerate(self.lines):
+            if line.name == line_name:
+                self.selected_line_index = idx
+                self.lines_list.selection_clear(0, tk.END)
+                self.lines_list.selection_set(idx)
+                self.lines_list.activate(idx)
+                self.lines_list.see(idx)
+                break
+
     def _update_detail_charts(
         self,
         summary: Optional[MonteCarloSummary],
         result: Optional[MonteCarloResult],
     ) -> None:
-        self.throughput_hist_ax.clear()
-        self.cycle_hist_ax.clear()
-        self.station_state_ax.clear()
+        for axis in (
+            self.throughput_hist_ax,
+            self.cycle_hist_ax,
+            self.throughput_box_ax,
+            self.cycle_box_ax,
+            self.scatter_ax,
+            self.run_sequence_ax,
+            self.station_state_ax,
+            self.station_block_ax,
+        ):
+            axis.clear()
+        if self.run_sequence_ax_twin is not None:
+            self.run_sequence_ax_twin.remove()
+            self.run_sequence_ax_twin = None
 
         if not summary or not result:
-            for axis in (self.throughput_hist_ax, self.cycle_hist_ax, self.station_state_ax):
+            for axis in (
+                self.throughput_hist_ax,
+                self.cycle_hist_ax,
+                self.throughput_box_ax,
+                self.cycle_box_ax,
+                self.scatter_ax,
+                self.run_sequence_ax,
+                self.station_state_ax,
+                self.station_block_ax,
+            ):
                 axis.text(0.5, 0.5, "Run a simulation to view charts", ha="center", va="center")
                 axis.set_xticks([])
                 axis.set_yticks([])
             self.detail_canvas.draw_idle()
+            self.station_canvas.draw_idle()
             return
 
         throughput_values = [run.throughput_rate for run in result.runs if run.throughput_rate > 0]
@@ -856,6 +1000,7 @@ class SimulatorGUI:
             self.throughput_hist_ax.set_xlabel("Jobs per minute")
             self.throughput_hist_ax.set_ylabel("Simulation runs")
             self.throughput_hist_ax.legend()
+            self.throughput_hist_ax.grid(True, axis="y", linestyle="--", alpha=0.3)
         else:
             self.throughput_hist_ax.text(0.5, 0.5, "No throughput recorded", ha="center", va="center")
 
@@ -872,8 +1017,81 @@ class SimulatorGUI:
             self.cycle_hist_ax.set_xlabel("Minutes per job")
             self.cycle_hist_ax.set_ylabel("Simulation runs")
             self.cycle_hist_ax.legend()
+            self.cycle_hist_ax.grid(True, axis="y", linestyle="--", alpha=0.3)
         else:
             self.cycle_hist_ax.text(0.5, 0.5, "No completed jobs", ha="center", va="center")
+
+        if throughput_values:
+            self.throughput_box_ax.boxplot(
+                throughput_values,
+                vert=False,
+                patch_artist=True,
+                boxprops=dict(facecolor="#4C78A8", alpha=0.6),
+                medianprops=dict(color="#F58518", linewidth=2),
+            )
+            self.throughput_box_ax.set_title("Throughput spread")
+            self.throughput_box_ax.set_xlabel("Jobs per minute")
+            self.throughput_box_ax.set_yticks([])
+            self.throughput_box_ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+        else:
+            self.throughput_box_ax.text(0.5, 0.5, "No throughput recorded", ha="center", va="center")
+
+        if cycle_values:
+            self.cycle_box_ax.boxplot(
+                cycle_values,
+                vert=False,
+                patch_artist=True,
+                boxprops=dict(facecolor="#72B7B2", alpha=0.6),
+                medianprops=dict(color="#F58518", linewidth=2),
+            )
+            self.cycle_box_ax.set_title("Cycle time spread")
+            self.cycle_box_ax.set_xlabel("Minutes per job")
+            self.cycle_box_ax.set_yticks([])
+            self.cycle_box_ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+        else:
+            self.cycle_box_ax.text(0.5, 0.5, "No completed jobs", ha="center", va="center")
+
+        if throughput_values and cycle_values and len(throughput_values) == len(cycle_values):
+            self.scatter_ax.scatter(
+                cycle_values,
+                throughput_values,
+                c=range(1, len(throughput_values) + 1),
+                cmap="viridis",
+                edgecolors="white",
+            )
+            self.scatter_ax.set_title("Run correlation")
+            self.scatter_ax.set_xlabel("Cycle time (min)")
+            self.scatter_ax.set_ylabel("Throughput (jobs/min)")
+            self.scatter_ax.grid(True, linestyle="--", alpha=0.3)
+        else:
+            self.scatter_ax.text(0.5, 0.5, "Insufficient paired data", ha="center", va="center")
+
+        if throughput_values:
+            runs = list(range(1, len(throughput_values) + 1))
+            self.run_sequence_ax.plot(
+                runs,
+                throughput_values,
+                marker="o",
+                color="#4C78A8",
+                label="Throughput",
+            )
+            self.run_sequence_ax.set_xlabel("Simulation run")
+            self.run_sequence_ax.set_ylabel("Throughput (jobs/min)")
+            self.run_sequence_ax.grid(True, linestyle="--", alpha=0.3)
+            if cycle_values and len(cycle_values) == len(runs):
+                self.run_sequence_ax_twin = self.run_sequence_ax.twinx()
+                self.run_sequence_ax_twin.plot(
+                    runs,
+                    cycle_values,
+                    marker="s",
+                    color="#72B7B2",
+                    label="Cycle time",
+                )
+                self.run_sequence_ax_twin.set_ylabel("Cycle time (min)")
+                self.run_sequence_ax.legend(loc="upper left")
+                self.run_sequence_ax_twin.legend(loc="upper right")
+        else:
+            self.run_sequence_ax.text(0.5, 0.5, "No throughput recorded", ha="center", va="center")
 
         stations = list(summary.station_utilization.keys())
         if stations:
@@ -909,6 +1127,7 @@ class SimulatorGUI:
             self.station_state_ax.set_xlim(0, 100)
             self.station_state_ax.set_title("Workstation state mix")
             self.station_state_ax.legend(loc="lower right")
+            self.station_state_ax.grid(True, axis="x", linestyle="--", alpha=0.3)
             for y, s, p, b in zip(y_positions, starved, processing, blocked):
                 total = s + p + b
                 self.station_state_ax.text(
@@ -919,11 +1138,38 @@ class SimulatorGUI:
                     fontsize=8,
                     color="#444444",
                 )
+
+            indices = list(range(len(stations)))
+            self.station_block_ax.bar(
+                indices,
+                blocked,
+                color="#F58518",
+                label="Blocked",
+            )
+            self.station_block_ax.bar(
+                indices,
+                starved,
+                bottom=blocked,
+                color="#E45756",
+                label="Starved",
+            )
+            self.station_block_ax.set_xticks(indices)
+            self.station_block_ax.set_xticklabels(stations, rotation=30, ha="right")
+            self.station_block_ax.set_ylabel("% of simulated time")
+            self.station_block_ax.set_ylim(0, max(100, max((b + s) for b, s in zip(blocked, starved)) + 5))
+            self.station_block_ax.set_title("Where work is waiting")
+            self.station_block_ax.legend()
+            self.station_block_ax.grid(True, axis="y", linestyle="--", alpha=0.3)
         else:
-            self.station_state_ax.text(0.5, 0.5, "No workstation data", ha="center", va="center")
+            for axis in (self.station_state_ax, self.station_block_ax):
+                axis.text(0.5, 0.5, "No workstation data", ha="center", va="center")
+                axis.set_xticks([])
+                axis.set_yticks([])
 
         self.detail_figure.tight_layout(pad=1.5)
+        self.station_figure.tight_layout(pad=1.5)
         self.detail_canvas.draw_idle()
+        self.station_canvas.draw_idle()
 
     @staticmethod
     def _choose_histogram_bins(count: int) -> int:
@@ -938,7 +1184,10 @@ class SimulatorGUI:
         if self._buffer_thread and self._buffer_thread.is_alive():
             return
         if self.selected_line_index is None:
-            messagebox.showinfo("Select a line", "Select a line on the setup tab to evaluate buffer locations.")
+            messagebox.showinfo(
+                "Select a line",
+                "Select a line on the setup or results tab to evaluate buffer locations.",
+            )
             return
         line = self.lines[self.selected_line_index]
         if len(line.tasks) < 2:
